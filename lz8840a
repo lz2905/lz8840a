@@ -1,0 +1,108 @@
+library(shiny)
+library(dplyr)
+
+# Define UI
+ui <- fluidPage(
+  titlePanel("Interactive Data Processing with dplyr"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      # Upload file
+      fileInput(inputId = "file", label = "Upload a CSV file", accept = ".csv"),
+      
+      # Filter Interface
+      selectInput("filter_field", "Select field to filter", choices = NULL),
+      selectInput("filter_operation", "Select filter operation", choices = c(">", "<", "==")),
+      numericInput("filter_value", "Enter a filter value", value = 0),
+      
+      # Field Selection
+      uiOutput("select_fields"),
+      
+      # Group By
+      selectInput("group_field", "Select field to group by", choices = NULL),
+      
+      # Summarize
+      selectInput("summary_field", "Select field to summarize", choices = NULL),
+      selectInput("summary_function", "Select summary function", 
+                  choices = c("min", "mean", "max", "sd")),
+      
+      actionButton("apply", "Apply Changes")
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Filtered Data", tableOutput("filtered_table")),
+        tabPanel("Summary Data", tableOutput("summary_table"))
+      )
+    )
+  )
+)
+
+# Define server
+server <- function(input, output, session) {
+  
+  # Reactive to store the uploaded data
+  dataset <- reactive({
+    req(input$file)
+    read.csv(input$file$datapath)
+  })
+  
+  # Update filter, display, and group_by choices based on uploaded dataset
+  observe({
+    req(dataset())
+    fields <- names(dataset())
+    updateSelectInput(session, "filter_field", choices = fields)
+    updateSelectInput(session, "group_field", choices = c("", fields))
+    updateSelectInput(session, "summary_field", choices = fields)
+  })
+  
+  # UI for selecting fields to display
+  output$select_fields <- renderUI({
+    req(dataset())
+    checkboxGroupInput("display_fields", "Select fields to display", 
+                       choices = names(dataset()), 
+                       selected = names(dataset()))
+  })
+  
+  # Reactive to apply filtering
+  filtered_data <- reactive({
+    req(dataset())
+    req(input$filter_field, input$filter_operation, input$filter_value)
+    filter_expr <- paste(input$filter_field, input$filter_operation, input$filter_value)
+    dataset() %>% filter(eval(parse(text = filter_expr)))
+  })
+  
+  # Reactive to handle selected fields
+  displayed_data <- reactive({
+    req(filtered_data())
+    req(input$display_fields)
+    filtered_data() %>% select(all_of(input$display_fields))
+  })
+  
+  # Reactive for grouped and summarized data
+  summarized_data <- reactive({
+    req(displayed_data(), input$group_field, input$summary_field, input$summary_function)
+    if (input$group_field != "") {
+      displayed_data() %>%
+        group_by(across(all_of(input$group_field))) %>%
+        summarize(Summary = match.fun(input$summary_function)(get(input$summary_field)), .groups = "drop")
+    } else {
+      data.frame(Summary = match.fun(input$summary_function)(get(input$summary_field)))
+    }
+  })
+  
+  # Render filtered data table
+  output$filtered_table <- renderTable({
+    req(displayed_data())
+    displayed_data()
+  })
+  
+  # Render summarized data table
+  output$summary_table <- renderTable({
+    req(summarized_data())
+    summarized_data()
+  })
+}
+
+# Run the app
+shinyApp(ui, server)
